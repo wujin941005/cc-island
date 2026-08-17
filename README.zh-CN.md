@@ -15,7 +15,8 @@
   <img src="docs/screenshots/codex-page.png" width="48%" alt="从手表帧缓冲抓取的 Codex 独立页面">
 </p>
 
-左边是第一版经典双行布局的真机照片；右边是当前 Codex 独立页面，由手表帧缓冲直接抓取。
+左边是第一版经典双行布局的真机照片；右边是加入电量底栏前的 Codex 独立页面帧缓冲截图，
+当前固件保留相同主页面，并增加下文说明的电池图标与百分比底栏。
 
 CC Island 把一块 **M5Stack StopWatch**（圆形 AMOLED，ESP32‑S3）变成 AI
 编程用量与主机健康状态的小表盘。它支持 **Claude Code（橙）**、**Codex（蓝）**、
@@ -27,6 +28,7 @@ CC Island 把一块 **M5Stack StopWatch**（圆形 AMOLED，ESP32‑S3）变成 
 - **蓝牙 BLE** 与 **Wi‑Fi HTTP 轮询**两种传输，可并存
 - **断线保留最后数据**：provider、bridge 或 Wi‑Fi 短暂异常时继续显示旧值；手表重启后也能从 Flash 恢复
 - **主机系统页**：电脑名、CPU、内存、磁盘占用与读写、网络上下行；支持自动轮播和左右滑动
+- **手表电量栏**：所有页面底部显示分档电池图标与精确百分比，并用颜色区分充电与低电量
 
 灵感来自 [CodexIsland](https://github.com/ericjypark/codex-island)（显示在 MacBook 刘海里）。
 **本地优先，provider 凭证始终留在主机**：bridge 读取你 CLI 已经写好的凭证、查询各家官方用量接口、
@@ -95,7 +97,8 @@ Bridge 运行在 WSL 时，还会自动检查挂载进来的 Windows 用户目�
 原生命令和 `/proc` 兜底。系统监控仍默认关闭，因为它和 AI 用量是独立功能。
 
 左右滑动可切页；**橙色按钮**切换 `AUTO` / `MAN` 自动或手动轮播；**蓝色按钮**
-请求立即刷新。设置 `CC_AUTO_SWITCH_MS=0` 可让固件默认从手动模式启动。
+请求立即刷新。设置 `CC_AUTO_SWITCH_MS=0` 可让固件默认从手动模式启动。底栏会在所有
+页面持续显示 `AUTO`/`MAN`、分档电池图标与精确电量；百分比后的 `+` 表示已接入外部电源。
 
 ## 架构
 
