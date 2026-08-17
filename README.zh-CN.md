@@ -25,6 +25,7 @@ CC Island 把一块 **M5Stack StopWatch**（圆形 AMOLED，ESP32‑S3）变成 
 - **Claude Code / Codex / OpenCode** 三个 provider，可选经典双行布局，也可让
   Codex 与 OpenCode 各自独占一页
 - **蓝牙 BLE** 与 **Wi‑Fi HTTP 轮询**两种传输，可并存
+- **断线保留最后数据**：provider、bridge 或 Wi‑Fi 短暂异常时继续显示旧值；手表重启后也能从 Flash 恢复
 - **主机系统页**：电脑名、CPU、内存、磁盘占用与读写、网络上下行；支持自动轮播和左右滑动
 
 灵感来自 [CodexIsland](https://github.com/ericjypark/codex-island)（显示在 MacBook 刘海里）。
@@ -104,9 +105,9 @@ Bridge 运行在 WSL 时，还会自动检查挂载进来的 Windows 用户目�
    · Claude/Codex 接口 + 本地日志                  · 双行或 provider 独立页面（LVGL）
    · OpenCode SQLite + 可选 Go 配额                · 滑动 + 自动/手动轮播
    · 三平台原生指标 + WSL Windows 集成               · 可选主机系统页
-   · provider 缓存 30 秒 / 系统约 4 秒             · Wi-Fi polling + BLE NUS 接收
+   · 30 秒刷新 + 6 小时 last-good 回退              · Wi-Fi polling + BLE NUS 接收
    · GET /stats ─────────HTTP (Wi‑Fi)─────────▶   · 蓝键立即刷新
-   · 紧凑 JSON 推送 ───蓝牙(NUS)──────────────▶   · 过阈值振动
+   · 紧凑 JSON 推送 ───蓝牙(NUS)──────────────▶   · Flash 持久化最后有效数据
 ```
 
 手表是被动的 BLE 外设（Mac/PC 连上写入），也可连 Wi‑Fi 定时轮询。**token、日志、
@@ -174,6 +175,9 @@ macOS 首次运行会弹蓝牙权限；Linux 需要可用的 BlueZ/D-Bus。仓�
 
 - **自动刷新（Wi‑Fi）**：源码模板默认 10 秒，`.env.example` 使用 5 秒；provider 数据
   缓存 30 秒；开启后系统指标约 4 秒刷新，所以手表 5 秒 polling 不会每次都请求 provider
+- **断线缓存**：provider 刷新失败后，bridge 最多 6 小时继续返回最后一次成功数据。手表也会
+  在内存保留最新有效 Codex payload，并最多每 5 分钟写入一次 Flash；重新打开 app 或设备重启时
+  如果 bridge 不可达，会先显示缓存，不会把页面清成 0
 - **自动刷新（BLE）**：每 N 分钟（默认 5；Anthropic 接口会限流，别低于几分钟）。
 - **切换页面**：左右滑动；源码兜底值是每 5 秒自动轮播，**橙键**切换 `AUTO`
   （按定时器轮播）/ `MAN`（停留在当前页，直到手动滑动）；

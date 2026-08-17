@@ -88,6 +88,12 @@ std::int64_t jint64(cJSON* obj, const char* key)
     return it ? static_cast<std::int64_t>(it->valuedouble) : 0;
 }
 
+bool has_error(cJSON* obj)
+{
+    return cJSON_IsObject(obj) &&
+           cJSON_GetObjectItemCaseSensitive(obj, "error") != nullptr;
+}
+
 // --------------------------------------------------------------------------- //
 // One usage-window row: label + bar + big % + reset line (pages layout).
 // --------------------------------------------------------------------------- //
@@ -558,7 +564,7 @@ bool update_claude_row(cJSON* root)
     if (kLayoutPages) return false;
     cJSON* obj = cJSON_GetObjectItem(root, "c");
     UsageRow* row = row_for_provider("c");
-    if (!cJSON_IsObject(obj) || !row) return false;
+    if (!cJSON_IsObject(obj) || has_error(obj) || !row) return false;
 
     int h = jint(obj, "h");
     {
@@ -576,7 +582,8 @@ bool update_claude_row(cJSON* root)
 bool update_codex_page(cJSON* root)
 {
     cJSON* obj = cJSON_GetObjectItem(root, "x");
-    if (!cJSON_IsObject(obj)) return false;
+    cJSON* h_item = cJSON_GetObjectItemCaseSensitive(obj, "h");
+    if (!cJSON_IsObject(obj) || has_error(obj) || !cJSON_IsNumber(h_item)) return false;
     int h = jint(obj, "h"), hr = jint(obj, "hr"), hw = jint(obj, "hw");
     int w = jint(obj, "w"), wr = jint(obj, "wr"), ww = jint(obj, "ww");
     double cost = jdbl(obj, "$");
@@ -617,7 +624,7 @@ bool update_codex_page(cJSON* root)
 bool update_opencode_page(cJSON* root)
 {
     cJSON* obj = cJSON_GetObjectItem(root, "o");
-    if (!cJSON_IsObject(obj)) return false;
+    if (!cJSON_IsObject(obj) || has_error(obj)) return false;
     double today = jdbl(obj, "t");
     std::int64_t tokens = jint64(obj, "T");
     bool has_quota = cJSON_GetObjectItem(obj, "h") != nullptr;
@@ -696,6 +703,12 @@ void handle_line(const char* line)
 {
     cJSON* root = cJSON_Parse(line);
     if (!root) return;
+
+    cJSON* codex = cJSON_GetObjectItemCaseSensitive(root, "x");
+    cJSON* codex_h = cJSON_GetObjectItemCaseSensitive(codex, "h");
+    if (cJSON_IsObject(codex) && !has_error(codex) && cJSON_IsNumber(codex_h)) {
+        net::remember_line(line);
+    }
 
     bool alert = false;
     alert |= update_claude_row(root);

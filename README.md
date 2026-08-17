@@ -30,6 +30,8 @@ It supports three providers and two transports:
 - **Claude Code / Codex / OpenCode** — use the compact two-row layout, or give
   Codex and OpenCode one full page each.
 - **Bluetooth LE and Wi‑Fi HTTP polling** — both optional and able to coexist.
+- **Last-good offline display** — transient provider/bridge/Wi-Fi failures keep
+  the previous reading; the watch restores it from flash after a restart.
 - **Host-system monitoring** — PC name, CPU, memory, disk space and I/O, plus
   network upload/download; pages can auto-cycle or be swiped manually.
 
@@ -136,9 +138,9 @@ rotation, and the **blue button** requests an immediate refresh. Set
    • OpenRouter model-price catalog (cached)       • API-equivalent value (~$)
    • OpenCode SQLite + optional Go quota           • swipe + auto/manual page rotation
    • native host stats + WSL Windows integration   • optional host-system page
-   • 30 s provider cache / 4 s system refresh      • Wi-Fi polling + BLE NUS receiver
+   • 30 s refresh + 6 h last-good fallback         • Wi-Fi polling + BLE NUS receiver
    • GET /stats ─────────HTTP (Wi‑Fi)──────────▶   • blue button → immediate refresh
-   • compact JSON push ───BLE (NUS)────────────▶   • threshold-crossing vibration
+   • compact JSON push ───BLE (NUS)────────────▶   • flash-backed last-good display
 ```
 
 The watch is a passive BLE peripheral (the bridge connects and writes one short
@@ -262,6 +264,10 @@ transport.
   (template default 10 s; `.env.example` uses 5 s). Provider API/log data is
   cached for 30 s; when enabled, host stats refresh every 4 s. A 5 s device
   poll therefore does not re-query providers every time.
+- **Offline cache**: a provider refresh error keeps its last good bridge value
+  for up to 6 hours. The watch also keeps the latest valid Codex payload in RAM
+  and persists it at most once every 5 minutes, so reopening the app or rebooting
+  while the bridge is unreachable shows the previous reading instead of zeros.
 - **Auto‑refresh (BLE)**: every N minutes (default 5; Anthropic rate‑limits the
   usage endpoint, so don't go below a few minutes).
 - **Page switch**: swipe left/right, or use automatic rotation (source
