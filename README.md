@@ -17,8 +17,9 @@
   <img src="docs/screenshots/codex-page.png" width="48%" alt="Current Codex full-page layout captured from the framebuffer">
 </p>
 
-Left: the first working two-row layout on real hardware. Right: the current
-full-page Codex UI, captured directly from the watch framebuffer.
+Left: the first working two-row layout on real hardware. Right: the full-page
+Codex UI captured before the battery footer was added; current firmware keeps
+the same page and adds the footer documented below.
 
 CC Island turns an **M5Stack StopWatch** (round AMOLED, ESP32‑S3) into a tiny
 ambient display for AI coding usage and host health. It monitors Claude Code
@@ -34,6 +35,8 @@ It supports three providers and two transports:
   the previous reading; the watch restores it from flash after a restart.
 - **Host-system monitoring** — PC name, CPU, memory, disk space and I/O, plus
   network upload/download; pages can auto-cycle or be swiped manually.
+- **Watch battery footer** — level-aware battery icon and percentage on every
+  page, with charging and low-battery color states read from the factory PMIC.
 
 It's a hardware companion in the spirit of
 [CodexIsland](https://github.com/ericjypark/codex-island) (which lives in the
@@ -117,7 +120,9 @@ Monitoring remains opt-in because it is independent from AI usage tracking.
 
 Swipe left/right to change pages. The **orange button** toggles auto/manual page
 rotation, and the **blue button** requests an immediate refresh. Set
-`CC_AUTO_SWITCH_MS=0` to start in manual mode.
+`CC_AUTO_SWITCH_MS=0` to start in manual mode. The footer keeps the current
+`AUTO`/`MAN` state, a level-aware battery icon, and the exact percentage visible
+on every page; a trailing `+` means external power is connected.
 
 ## Hardware
 
