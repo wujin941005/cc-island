@@ -347,11 +347,15 @@ transport.
   Override the path with `OPENCODE_DB` or `--db`.
 - **OpenCode Go quota** (optional): set `OPENCODE_GO_WORKSPACE_ID` and
   `OPENCODE_GO_AUTH_COOKIE` (or `--go-workspace` / `--go-cookie`) to also show
-  the real subscription windows. OpenCode has no public usage API, so this
-  scrapes `https://opencode.ai/workspace/<id>/go` with your browser's `auth`
-  cookie (the community approach). Results are cached for five minutes. The
-  cookie starts with `Fe26.2**` and expires periodically — re-export it from
-  **F12 → Application → Cookies → https://opencode.ai → `auth`** when auth fails.
+  the real subscription windows. Use the browser's `__Host-console_session`
+  cookie value (starts with `st_`) in the existing `OPENCODE_GO_AUTH_COOKIE`
+  setting. The bridge reads `https://opencode.ai/console/api/go/status` with
+  the workspace ID in `x-org-id`, converting microcent meters into percentages
+  and reset times. This is the console's internal API and can change. Results
+  are cached for five minutes. Re-export the cookie from **F12 → Application →
+  Cookies → https://opencode.ai → `__Host-console_session`** when auth fails.
+  Legacy `Fe26.2**` cookies still use the old dashboard parser; migrated accounts
+  need the new session cookie.
 - **System** (optional): when `CC_SYSTEM_MONITOR=true`, reads CPU / memory /
   disk / network from native Windows, macOS, or Linux; WSL targets the Windows
   host first through PowerShell. `psutil` supplies full cross-platform disk and

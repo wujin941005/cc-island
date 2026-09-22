@@ -236,7 +236,12 @@ macOS 首次运行会弹蓝牙权限；Linux 需要可用的 BlueZ/D-Bus。仓�
   subagent 调用。已识别模型按 OpenRouter 折算等效价值，即使 Coding Plan 记录金额为 0
   也能显示；未知模型和旧数据库结构才回退 OpenCode 的记录金额。`/json` 仍以
   `actual_t` / `actual_d` 保留记录金额供诊断。配置 `OPENCODE_GO_*` 后才会额外读取 Go
-  订阅窗口，并缓存 5 分钟
+  订阅窗口，并缓存 5 分钟。将浏览器中的 `__Host-console_session` Cookie 值
+  （以 `st_` 开头）填入现有的 `OPENCODE_GO_AUTH_COOKIE`；bridge 通过
+  `/console/api/go/status` 和 `x-org-id` 读取配额，将金额计数换算成百分比与重置时间。
+  这是控制台内部接口，可能随上游更新变化。登录失效时，从浏览器开发者工具的
+  Application → Cookies → https://opencode.ai 重新复制该 Cookie。
+  旧的 `Fe26.2**` Cookie 仍兼容旧页面解析；已迁移的账号需要更新为新 Cookie
 - **系统指标（可选）**：仅在 `CC_SYSTEM_MONITOR=true` 时采集；原生 Windows、macOS、
   Linux 使用 `psutil`，并有平台原生兜底。WSL 优先通过 PowerShell 读取 Windows 主机，
   失败后才显示 WSL 自身。关闭时 Bridge 不采集，也不会在 payload 中发送 `sys`

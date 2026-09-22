@@ -43,6 +43,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -1548,14 +1549,12 @@ def cost_codex(midnight):
 
 
 # --------------------------------------------------------------------------- #
-# OpenCode Go — dashboard scrape for subscription quota (5h / weekly / monthly)
-#
-# OpenCode has no public usage API; the community approach is to scrape the
-# workspace Go dashboard, which embeds the numbers in SolidJS SSR hydration
-# output. Needs an `auth` cookie from your logged-in browser session — it
-# expires periodically, so re-export it when auth fails.
+# OpenCode Go — console quota JSON, with the legacy dashboard as a fallback
+# for old auth cookies. Both browser sessions expire and need re-exporting.
 # --------------------------------------------------------------------------- #
 _OC_GO_URL = "https://opencode.ai/workspace/{ws}/go"
+_OC_GO_STATUS_URL = "https://opencode.ai/console/api/go/status"
+_OC_GO_AUTH_ERROR = "go: authentication required; refresh __Host-console_session cookie"
 _OC_GO_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
              "Gecko/20100101 Firefox/148.0")
 _OC_GO_REFRESH_TTL = 5 * 60
@@ -1563,6 +1562,50 @@ _OC_GO_CACHE = {}
 _OC_GO_CACHE_AT = 0.0
 _OC_GO_CACHE_KEY = None
 _OC_GO_LOCK = threading.Lock()
+
+
+class _GoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urllib.parse.urlsplit(newurl)
+        # Login redirects can return HTTP 200 HTML and must not receive cookies
+        # on another origin (the legacy flow uses auth.opencode.ai).
+        if (target.scheme != "https" or target.netloc != "opencode.ai"
+                or target.path.startswith(("/auth/", "/console/login"))):
+            raise urllib.error.HTTPError(req.full_url, 401, "authentication required",
+                                         headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _parse_go_status(data):
+    """Normalize console microcent meters to the watch's existing quota fields."""
+    if data is None or (isinstance(data, dict) and data.get("access", False) is None):
+        return {"error": "go: no active subscription"}
+    try:
+        access = data["access"]
+        meters = access["meters"]
+        now = time.time()
+        out = {}
+        for field, key in (("fiveHour", "h"), ("week", "w"), ("month", "m")):
+            meter = meters[field]
+            limit = int(meter["limitMicroCents"])
+            used = int(meter["usedMicroCents"])
+            if limit < 0 or used < 0:
+                raise ValueError("negative meter")
+            # Match the console's integer rounding without losing bigint precision.
+            out[key] = min(100, (used * 200 + limit) // (limit * 2)) if limit else 0
+            reset = access["endsAt"] if key == "m" else meter["resetsAt"]
+            if reset is None and key == "h":
+                out[key + "r"] = 0  # The rolling window starts on first use.
+                continue
+            if not isinstance(reset, str):
+                raise ValueError("invalid reset")
+            reset_at = _parse_reset(reset)
+            if reset_at is None:
+                raise ValueError("invalid reset")
+            out[key + "r"] = max(0, round((reset_at - now) / 60))
+        return out
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return {"error": "go: invalid quota response"}
 
 
 def _extract_go_window(html, field):
@@ -1605,17 +1648,42 @@ def fetch_opencode_go(workspace_id, auth_cookie):
     """Return h/hr, w/wr, m/mr — quota percentages and reset minutes."""
     if not workspace_id or not auth_cookie:
         return {"error": "go config missing"}
-    url = _OC_GO_URL.format(ws=workspace_id)
-    req = urllib.request.Request(url, headers={
-        "Cookie": f"auth={auth_cookie}",
-        "User-Agent": _OC_GO_UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    })
+    cookie = auth_cookie.strip()
+    if cookie.startswith("__Host-console_session="):
+        cookie = cookie.partition("=")[2]
+    console = cookie.startswith("st_")
+    url = (_OC_GO_STATUS_URL if console else
+           _OC_GO_URL.format(ws=urllib.parse.quote(workspace_id, safe="")))
     try:
-        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
+        req = urllib.request.Request(url, headers={
+            "Cookie": f"__Host-console_session={cookie}" if console else f"auth={cookie}",
+            "User-Agent": _OC_GO_UA,
+            "Accept": "application/json" if console else "text/html",
+        })
+        if console:
+            req.add_header("x-org-id", workspace_id)
+        opener = urllib.request.build_opener(
+            _GoRedirectHandler(), urllib.request.HTTPSHandler(context=_SSL_CTX),
+        )
+        with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
             html = resp.read().decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"go: {e}"}
+            if urllib.parse.urlsplit(resp.geturl()).path.startswith(("/auth/", "/console/login")):
+                return {"error": _OC_GO_AUTH_ERROR}
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {"error": _OC_GO_AUTH_ERROR}
+        if e.code == 403:
+            return {"error": "go: access denied; check session cookie and workspace ID"}
+        return {"error": f"go: HTTP {e.code}"}
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return {"error": "go: network request failed"}
+    except ValueError:
+        return {"error": "go: invalid cookie or workspace ID"}
+    if console:
+        try:
+            return _parse_go_status(json.loads(html))
+        except (json.JSONDecodeError, ValueError):
+            return {"error": "go: expected console quota JSON"}
     out = {}
     for field, key in (("rollingUsage", "h"), ("weeklyUsage", "w"),
                        ("monthlyUsage", "m")):
@@ -1630,7 +1698,7 @@ def fetch_opencode_go(workspace_id, auth_cookie):
 
 
 def _cached_opencode_go(config):
-    """Avoid scraping the OpenCode Go dashboard on every 30-second refresh."""
+    """Avoid fetching OpenCode Go quota on every 30-second refresh."""
     global _OC_GO_CACHE, _OC_GO_CACHE_AT, _OC_GO_CACHE_KEY
     workspace_id = config.get("workspace_id")
     auth_cookie = config.get("auth_cookie")
@@ -2103,7 +2171,7 @@ def main():
     parser.add_argument("--go-workspace", metavar="WRK_ID", default=None,
                         help="OpenCode Go workspace id (or OPENCODE_GO_WORKSPACE_ID)")
     parser.add_argument("--go-cookie", metavar="AUTH_COOKIE", default=None,
-                        help="OpenCode Go 'auth' cookie from the browser (or OPENCODE_GO_AUTH_COOKIE)")
+                        help="OpenCode __Host-console_session cookie (or OPENCODE_GO_AUTH_COOKIE; legacy auth supported)")
     args = parser.parse_args()
 
     go = _resolve_opencode_go(args)

@@ -389,6 +389,134 @@ class OpenCodeTests(unittest.TestCase):
         self.assertNotIn("go", payload["o"])
 
 
+class OpenCodeGoTests(unittest.TestCase):
+    NOW = 1767225600  # 2026-01-01T00:00:00Z
+
+    def status(self):
+        return {
+            "cancelAtPeriodEnd": True,
+            "access": {
+                "endsAt": "2026-01-31T00:00:00.000Z",
+                "meters": {
+                    "fiveHour": {
+                        "limitMicroCents": "1200000000",
+                        "usedMicroCents": "30000000",
+                        "resetsAt": "2026-01-01T05:00:00.000Z",
+                    },
+                    "week": {
+                        "limitMicroCents": "3000000000",
+                        "usedMicroCents": "1080000000",
+                        "resetsAt": "2026-01-08T00:00:00.000Z",
+                    },
+                    "month": {
+                        "limitMicroCents": "6000000000",
+                        "usedMicroCents": "1980000000",
+                    },
+                },
+            },
+        }
+
+    def fetch(self, cookie, body, url=None):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = body.encode()
+        response.geturl.return_value = url or bridge._OC_GO_STATUS_URL
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(bridge.urllib.request, "build_opener", return_value=opener), \
+                mock.patch.object(bridge.time, "time", return_value=self.NOW):
+            result = bridge.fetch_opencode_go("wrk_test", cookie)
+        return result, opener.open.call_args.args[0]
+
+    def test_console_session_fetches_json_in_workspace_scope(self):
+        for cookie in ("st_test", "__Host-console_session=st_test"):
+            with self.subTest(cookie=cookie):
+                result, request = self.fetch(cookie, json.dumps(self.status()))
+                self.assertEqual(result, {
+                    "h": 3, "hr": 300, "w": 36, "wr": 10080,
+                    "m": 33, "mr": 43200,
+                })
+                self.assertEqual(request.full_url, bridge._OC_GO_STATUS_URL)
+                self.assertEqual(request.get_header("Cookie"), "__Host-console_session=st_test")
+                self.assertEqual(request.get_header("X-org-id"), "wrk_test")
+                self.assertEqual(request.get_header("Accept"), "application/json")
+
+    def test_idle_window_and_expired_reset(self):
+        data = self.status()
+        meters = data["access"]["meters"]
+        meters["fiveHour"].update(usedMicroCents="0", resetsAt=None)
+        meters["week"]["resetsAt"] = "2025-12-31T00:00:00Z"
+        result, _ = self.fetch("st_test", json.dumps(data))
+        self.assertEqual((result["h"], result["hr"], result["wr"]), (0, 0, 0))
+
+    def test_quota_clamping_and_bigint_precision(self):
+        data = self.status()
+        meters = data["access"]["meters"]
+        meters["fiveHour"].update(limitMicroCents="20000000000000000",
+                                 usedMicroCents="2499999999999999")
+        meters["week"]["usedMicroCents"] = "6000000000"
+        meters["month"]["limitMicroCents"] = "0"
+        result, _ = self.fetch("st_test", json.dumps(data))
+        self.assertEqual((result["h"], result["w"], result["m"]), (12, 100, 0))
+
+    def test_missing_subscription_is_not_zero_usage(self):
+        for data in (None, {"access": None}):
+            result, _ = self.fetch("st_test", json.dumps(data))
+            self.assertEqual(result, {"error": "go: no active subscription"})
+
+    def test_bad_json_or_meters_do_not_return_partial_quota(self):
+        for body in ("<html>login</html>", "{}", "[]", '{"access": false}'):
+            with self.subTest(body=body):
+                result, _ = self.fetch("st_test", body)
+                self.assertEqual(list(result), ["error"])
+        for field, value in (("limitMicroCents", "bad"), ("usedMicroCents", "-1"),
+                             ("resetsAt", "bad"), ("resetsAt", {})):
+            data = self.status()
+            data["access"]["meters"]["week"][field] = value
+            result, _ = self.fetch("st_test", json.dumps(data))
+            self.assertEqual(result, {"error": "go: invalid quota response"})
+
+    def test_http_failures_do_not_expose_credentials(self):
+        for code in (401, 403, 503):
+            opener = mock.Mock()
+            opener.open.side_effect = bridge.urllib.error.HTTPError(
+                bridge._OC_GO_STATUS_URL, code, "st_secret", {}, None,
+            )
+            with mock.patch.object(bridge.urllib.request, "build_opener", return_value=opener):
+                result = bridge.fetch_opencode_go("wrk_test", "st_secret")
+            self.assertNotIn("st_secret", result["error"])
+            if code == 401:
+                self.assertEqual(result["error"], bridge._OC_GO_AUTH_ERROR)
+            elif code == 403:
+                self.assertIn("access denied", result["error"])
+            else:
+                self.assertIn("503", result["error"])
+
+    def test_login_and_cross_origin_redirects_are_auth_errors(self):
+        request = bridge.urllib.request.Request(bridge._OC_GO_STATUS_URL,
+                                               headers={"Cookie": "secret"})
+        for url in ("https://opencode.ai/console/login",
+                    "https://opencode.ai/auth/authorize",
+                    "https://auth.opencode.ai/authorize",
+                    "http://opencode.ai/console/api/go/status"):
+            with self.subTest(url=url), self.assertRaises(bridge.urllib.error.HTTPError) as caught:
+                bridge._GoRedirectHandler().redirect_request(request, None, 302, "Found", {}, url)
+            self.assertEqual(caught.exception.code, 401)
+        result, _ = self.fetch("Fe26.2**old", "<html>Login</html>",
+                               "https://opencode.ai/console/login")
+        self.assertEqual(result, {"error": bridge._OC_GO_AUTH_ERROR})
+
+    def test_legacy_cookie_still_parses_solid_quota(self):
+        html = ("rollingUsage:$R[1]={usagePercent:12,resetInSec:1800},"
+                "weeklyUsage:$R[2]={usagePercent:34,resetInSec:3600},"
+                "monthlyUsage:$R[3]={usagePercent:56,resetInSec:7200}")
+        result, request = self.fetch("Fe26.2**old", html,
+                                     bridge._OC_GO_URL.format(ws="wrk_test"))
+        self.assertEqual(result, {"h": 12, "hr": 30, "w": 34, "wr": 60, "m": 56, "mr": 120})
+        self.assertEqual(request.get_header("Cookie"), "auth=Fe26.2**old")
+        self.assertEqual(request.full_url, bridge._OC_GO_URL.format(ws="wrk_test"))
+
+
 class SystemMonitorTests(unittest.TestCase):
     def test_env_bool(self):
         with mock.patch.dict(os.environ, {"CC_SYSTEM_MONITOR": "YES"}):
